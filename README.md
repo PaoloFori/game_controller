@@ -80,18 +80,6 @@ This split is permanent, not a workaround for now:
   controller (at which point you stop using it at all, rather than working
   around the limitation).
 
-To start bridge + dummy together with a single command anyway (bridge in the
-background, dummy in the foreground of the same terminal), use
-[`scripts/run_dummy_session.sh`](../../scripts/run_dummy_session.sh) at the
-repo root:
-
-```bash
-# from the repo root
-source install/setup.bash
-./scripts/run_dummy_session.sh          # target=local
-./scripts/run_dummy_session.sh host     # target=host
-```
-
 ## Running
 
 ```bash
@@ -129,9 +117,6 @@ ros2 launch game_bridge bridge.launch.py target:=local
 source install/setup.bash
 ros2 run game_controller dummy_keyboard_controller
 ```
-
-(Terminals 3+4 can be replaced by one: `./scripts/run_dummy_session.sh` from
-the repo root, see above.)
 
 In the server window's **CONNECTIONS** tab, pick a game for the connected
 player -- it'll show up under whatever `display_name` is set in
