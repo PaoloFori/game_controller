@@ -19,11 +19,22 @@ DEFAULT_THRESHOLDS = {
     "threshold_4": "0.7",
 }
 
+DEFAULT_EXTRA_PARAMS = {
+    "command_period_sec": "0.5",
+    "with_reset": "false",
+    "reset_service_name": "/integrator/reset",
+    "control_topic": "/game_controller/control",
+}
+
 
 def generate_launch_description() -> LaunchDescription:
     threshold_args = [
         DeclareLaunchArgument(name, default_value=default, description=f"{name} for the two-class controller")
         for name, default in DEFAULT_THRESHOLDS.items()
+    ]
+    extra_args = [
+        DeclareLaunchArgument(name, default_value=default, description=f"{name} for the two-class controller")
+        for name, default in DEFAULT_EXTRA_PARAMS.items()
     ]
 
     node = Node(
@@ -31,7 +42,9 @@ def generate_launch_description() -> LaunchDescription:
         executable="two_class_threshold_controller",
         name="two_class_threshold_controller",
         output="screen",
-        parameters=[{name: LaunchConfiguration(name) for name in DEFAULT_THRESHOLDS}],
+        parameters=[
+            {name: LaunchConfiguration(name) for name in {**DEFAULT_THRESHOLDS, **DEFAULT_EXTRA_PARAMS}}
+        ],
     )
 
-    return LaunchDescription([*threshold_args, node])
+    return LaunchDescription([*threshold_args, *extra_args, node])
