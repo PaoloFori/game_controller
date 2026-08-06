@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Dummy controller driven by arrow keys instead of /integrated/raw.
 
 Useful to exercise game_bridge (and the game itself) without a real
