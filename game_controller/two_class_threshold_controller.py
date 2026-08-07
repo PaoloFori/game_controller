@@ -68,15 +68,24 @@ class TwoClassThresholdController(BaseController):
 
     @staticmethod
     def _command_for_probability(probability: float, t: dict[str, float]) -> str | None:
+        # Swapped vs. the "naive" low->A/high->B mapping: the wheel node
+        # places low probability (classes[0] dominant) on the visual right
+        # and high probability (classes[1] dominant) on the visual left
+        # (SingleWheel::input2angle + neurodraw's Shape::rotate use the
+        # standard math convention, 0deg = +x/right, increasing
+        # counterclockwise towards left) -- so low probability must map to
+        # INPUT_B ("rotate right" in Brainski2, see PROTOCOL.md) and high
+        # probability to INPUT_A ("rotate left") for the wheel's visual side
+        # to match the direction the game actually turns.
         if probability < t["threshold_1"]:
-            return "INPUT_A"
+            return "INPUT_B" # right
         if probability < t["threshold_2"]:
             return None
         if probability < t["threshold_3"]:
-            return "INPUT_C"
+            return "INPUT_C" # up
         if probability < t["threshold_4"]:
             return None
-        return "INPUT_B"
+        return "INPUT_A" # left
 
     def _maybe_send(self, command: str) -> None:
         now_ns = self.get_clock().now().nanoseconds

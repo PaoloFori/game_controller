@@ -40,11 +40,19 @@ each one needs a `#!/usr/bin/env python3` shebang.
 
   | Probability range                     | Command          |
   | -------------------------------------- | ---------------- |
-  | `< threshold_1`                        | `INPUT_A`         |
+  | `< threshold_1`                        | `INPUT_B`         |
   | `[threshold_1, threshold_2)`           | *(nothing)*       |
   | `[threshold_2, threshold_3)`           | `INPUT_C` (forward) |
   | `[threshold_3, threshold_4)`           | *(nothing)*       |
-  | `>= threshold_4`                       | `INPUT_B`         |
+  | `>= threshold_4`                       | `INPUT_A`         |
+
+  Swapped vs. the "naive" low->A/high->B mapping: the wheel (see
+  `ros2neuro_feedback_wheel`'s README) places low probability (`classes[0]`
+  dominant) on the visual right and high probability (`classes[1]`
+  dominant) on the visual left, so low probability has to map to `INPUT_B`
+  ("rotate right" in Brainski2, see the game's `PROTOCOL.md`) and high
+  probability to `INPUT_A` ("rotate left") for the wheel's visual side to
+  match the direction the game actually turns.
 
   Defaults: `threshold_1=0.3`, `threshold_2=0.4`, `threshold_3=0.6`,
   `threshold_4=0.7`. All four are ROS2 parameters, overridable from the
