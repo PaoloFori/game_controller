@@ -24,22 +24,11 @@ DEFAULTS = {
     "probability_topic": "/integrated/raw",
 }
 
-WHEEL_THRESHOLD_DEFAULTS = {
-    "threshold_1": "0.3",
-    "threshold_2": "0.4",
-    "threshold_3": "0.6",
-    "threshold_4": "0.7",
-}
-
 
 def generate_launch_description() -> LaunchDescription:
     args = [
         DeclareLaunchArgument(name, default_value=default, description=f"{name} for the training controller")
         for name, default in DEFAULTS.items()
-    ]
-    wheel_threshold_args = [
-        DeclareLaunchArgument(name, default_value=default, description=f"{name} for the wheel's visual markers")
-        for name, default in WHEEL_THRESHOLD_DEFAULTS.items()
     ]
 
     training_node = Node(
@@ -61,9 +50,11 @@ def generate_launch_description() -> LaunchDescription:
                 "input_topic": LaunchConfiguration("control_topic"),
                 "event_topic": LaunchConfiguration("event_topic"),
                 "classes": LaunchConfiguration("classes"),
-                **{name: LaunchConfiguration(name) for name in WHEEL_THRESHOLD_DEFAULTS},
+                # Same values training_controller uses to decide hit/miss, so
+                # the wheel's markers sit exactly where a hit is triggered.
+                "thresholds": LaunchConfiguration("thresholds"),
             }
         ],
     )
 
-    return LaunchDescription([*args, *wheel_threshold_args, training_node, wheel_node])
+    return LaunchDescription([*args, training_node, wheel_node])

@@ -102,17 +102,17 @@ bool TrainingController::configure(void) {
 
     RCLCPP_INFO(this->get_logger(), "Trials: %d", this->trialsequence_.size());
 
-    std::string control_topic, event_topic, probability_topic;
+    std::string control_topic, event_topic;
     this->get_parameter("control_topic", control_topic);
     this->get_parameter("event_topic", event_topic);
-    this->get_parameter("probability_topic", probability_topic);
+    this->get_parameter("probability_topic", this->probability_topic_);
 
     this->control_pub_ = this->create_publisher<ros2neuro_msgs::msg::NeuroControl>(control_topic, 10);
     this->event_pub_ = this->create_publisher<ros2neuro_msgs::msg::NeuroEvent>(event_topic, 10);
 
     if (this->modality_ == Modality::Evaluation) {
         this->probability_sub_ = this->create_subscription<ros2neuro_msgs::msg::NeuroControl>(
-            probability_topic,
+            this->probability_topic_,
             10,
             std::bind(&TrainingController::on_probability, this, std::placeholders::_1));
     }
@@ -131,6 +131,9 @@ void TrainingController::run(void) {
     RCLCPP_INFO(this->get_logger(), "Protocol started");
 
     this->sleep(this->duration_.begin);
+    if (!rclcpp::ok()) {
+        return;
+    }
 
     for (auto it = this->trialsequence_.begin(); it != this->trialsequence_.end(); ++it) {
 
@@ -153,14 +156,23 @@ void TrainingController::run(void) {
 
         this->setevent(Events::Start);
         this->sleep(this->duration_.start);
+        if (!rclcpp::ok()) {
+            return;
+        }
         this->setevent(Events::Start + Events::Off);
 
         this->setevent(Events::Fixation);
         this->sleep(this->duration_.fixation);
+        if (!rclcpp::ok()) {
+            return;
+        }
         this->setevent(Events::Fixation + Events::Off);
 
         this->setevent(trialclass);
         this->sleep(this->duration_.cue);
+        if (!rclcpp::ok()) {
+            return;
+        }
 
         rclcpp::spin_some(this->shared_from_this());
 
@@ -169,6 +181,23 @@ void TrainingController::run(void) {
 
         this->has_new_input_ = false;
         this->current_input_ = 0.5f;
+
+        if (this->modality_ == Modality::Evaluation) {
+            // A subscription's ROS queue can still hold up to its depth in
+            // stale messages (e.g. the previous trial's saturated buffer,
+            // from before the reset_event-triggered integrator reset this
+            // CFeedback just caused) -- resetting current_input_/
+            // has_new_input_ above doesn't clear that backlog, and the
+            // first spin_some() below would otherwise deliver it, feeding
+            // is_target_hit() a leftover value instead of this trial's
+            // actual (neutral, just-reset) starting point. Recreating the
+            // subscription discards the backlog outright.
+            this->probability_sub_.reset();
+            this->probability_sub_ = this->create_subscription<ros2neuro_msgs::msg::NeuroControl>(
+                this->probability_topic_,
+                10,
+                std::bind(&TrainingController::on_probability, this, std::placeholders::_1));
+        }
 
         RCLCPP_INFO(
             this->get_logger(), "Trial %d/%d (class: %d | duration: %d ms)",
@@ -200,6 +229,18 @@ void TrainingController::run(void) {
 
         this->setevent(Events::CFeedback + Events::Off);
 
+        // Give the wheel a comfortable margin to have already processed the
+        // final control value (the one that put it on the threshold) before
+        // the outcome events below arrive on a separate topic -- control
+        // and neuroevent have no cross-topic delivery-order guarantee, and
+        // without this gap they can be published close enough together
+        // that the wheel's boom appears to show up before it visually
+        // reaches the threshold.
+        this->sleep(20);
+        if (!rclcpp::ok()) {
+            return;
+        }
+
         const int reached_classid = this->direction2classid(targethit);
         if (reached_classid >= 0)
             this->setevent(reached_classid + Events::Command);
@@ -207,12 +248,26 @@ void TrainingController::run(void) {
         const int outcome = (trialdirection == targethit) ? Events::Hit : Events::Miss;
         this->setevent(outcome);
         this->sleep(this->duration_.boom);
+        if (!rclcpp::ok()) {
+            return;
+        }
         this->setevent(outcome + Events::Off);
 
+        // Explicitly publish a centered control value once the outcome boom
+        // is hidden, so the wheel resets to its starting position exactly
+        // like it would for a real 0.5 (i.e. "undecided") classifier output.
+        this->publish_control(0.5f);
+
         this->sleep(this->duration_.iti);
+        if (!rclcpp::ok()) {
+            return;
+        }
     }
 
     this->sleep(this->duration_.end);
+    if (!rclcpp::ok()) {
+        return;
+    }
 
     RCLCPP_INFO(this->get_logger(), "Protocol ended");
 }
@@ -306,7 +361,15 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    node->run();
+    try {
+        node->run();
+    } catch (const rclcpp::exceptions::RCLError& ex) {
+        // rclcpp::ok() is checked throughout run(), but shutdown happens
+        // asynchronously on a signal-handling thread -- a call like
+        // spin_some() can still race past the check and throw if shutdown
+        // lands in that gap. Treat it as a normal shutdown, not a crash.
+        RCLCPP_WARN(node->get_logger(), "run() interrupted by shutdown: %s", ex.what());
+    }
 
     rclcpp::shutdown();
     return 0;

@@ -3,6 +3,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 
+#include <string>
 #include <vector>
 
 #include <ros2neuro_msgs/msg/neuro_control.hpp>
@@ -70,6 +71,7 @@ private:
     std::vector<double> thresholds_;
     Duration duration_{};
     Modality modality_ = Modality::Calibration;
+    std::string probability_topic_;
 
     float current_input_ = 0.5f;
     bool has_new_input_ = false;

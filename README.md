@@ -120,6 +120,27 @@ each one needs a `#!/usr/bin/env python3` shebang.
   position onward to `control_topic` instead -- in both modalities the wheel
   only ever reads `control_topic`.
 
+  It never resets the integrator itself -- that's configured directly on
+  the integrator node (`integrator.reset_event`, see
+  `launchers_bci/evaluation_pipeline.launch.xml`) to fire on the `CFeedback`
+  event below, so each trial's accumulator starts neutral right when
+  continuous feedback begins, rather than carrying over bias from the
+  previous trial.
+
+  In `evaluation` modality it also recreates `probability_sub_` (the
+  `probability_topic` subscription) at that same `CFeedback` moment, right
+  after resetting `current_input_`. Reason: nothing spins the executor
+  during `Start`/`Fixation`/cue (they're plain sleeps), so that
+  subscription's ROS queue can build up a backlog of up to its depth (10)
+  in stale messages -- e.g. still reflecting the *previous* trial's
+  saturated buffer, from before the integrator reset above has even run.
+  Resetting `current_input_`/`has_new_input_` only clears local state, not
+  that backlog; the loop's first `spin_some()` would otherwise deliver
+  those stale messages and feed `is_target_hit()` a leftover value instead
+  of this trial's real starting point -- observed in practice as trials
+  resolving in ~2ms instead of the hundreds of ms a real threshold crossing
+  takes. Recreating the subscription discards the backlog outright.
+
   It publishes `/neuroevent` for `Start`, `Fixation`, cue-by-class-id,
   `CFeedback`, and the outcome (`Hit`/`Miss`, plus `<class id>+Command` when
   a real zone was reached, for the wheel to color the "boom" correctly) --
@@ -127,6 +148,17 @@ each one needs a `#!/usr/bin/env python3` shebang.
   reacts to, see `ros2neuro_feedback_wheel`'s `Wheel.h`. A bare `Miss` with
   no preceding `<class>+Command` in that trial means a timeout (no zone
   reached in time), shown by the wheel as a generic boom.
+
+  Between the control loop ending (the wheel has just been told the value
+  that put it on the threshold) and publishing those outcome events, it
+  sleeps 20ms -- `control_topic` and `event_topic` are two independent
+  topics with no cross-topic delivery-order guarantee, and without this
+  margin they can be published close enough together that the wheel's
+  boom appears before the wheel has visibly reached the threshold. Once the
+  boom hides (`outcome + Off`), it explicitly publishes `0.5` on
+  `control_topic` so the wheel's center line returns to its starting
+  position exactly as it would for a real "undecided" classifier output --
+  the wheel itself has no reset logic (see its README).
 - **`dummy_keyboard_controller.py`** -- `DummyKeyboardController`. Ignores
   `/integrated/raw` (its `on_integrated` is a no-op) and instead reads arrow
   keys from the terminal: Left `-> INPUT_A`, Right `-> INPUT_B`, Up `-> INPUT_C`,
