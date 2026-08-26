@@ -241,9 +241,9 @@ void TrainingController::run(void) {
             return;
         }
 
-        const int reached_classid = this->direction2classid(targethit);
-        if (reached_classid >= 0)
-            this->setevent(reached_classid + Events::Command);
+        //const int reached_classid = this->direction2classid(targethit);
+        //if (reached_classid >= 0)
+        //    this->setevent(reached_classid + Events::Command);
 
         const int outcome = (trialdirection == targethit) ? Events::Hit : Events::Miss;
         this->setevent(outcome);
