@@ -24,7 +24,7 @@ bool TrainingController::configure(void) {
     this->declare_parameter<std::string>("event_topic", "/neuroevent");
     this->declare_parameter<std::string>("probability_topic", "/integrated/raw");
 
-    this->declare_parameter("duration.begin", 5000);
+    this->declare_parameter("duration.begin", 10000);
     this->declare_parameter("duration.start", 1000);
     this->declare_parameter("duration.fixation", 2000);
     this->declare_parameter("duration.cue", 1000);
@@ -115,6 +115,14 @@ bool TrainingController::configure(void) {
             this->probability_topic_,
             10,
             std::bind(&TrainingController::on_probability, this, std::placeholders::_1));
+
+        // Tracks blink onset/offset from ros2neuro_artifact_blink (see
+        // Events::Blink) so a still-open blink can be force-closed before
+        // CFeedback ends -- see the CF loop in run().
+        this->event_sub_ = this->create_subscription<ros2neuro_msgs::msg::NeuroEvent>(
+            event_topic,
+            10,
+            std::bind(&TrainingController::on_neuro_event, this, std::placeholders::_1));
     }
 
     return true;
@@ -227,6 +235,13 @@ void TrainingController::run(void) {
             r.sleep();
         }
 
+        if (this->modality_ == Modality::Evaluation && this->blink_active_) {
+            // Never leave a blink open across a CFeedback boundary in the
+            // recording -- close it first, at the same instant, without
+            // touching any of this trial's own durations.
+            this->setevent(Events::Blink + Events::Off);
+            this->blink_active_ = false;
+        }
         this->setevent(Events::CFeedback + Events::Off);
 
         // Give the wheel a comfortable margin to have already processed the
@@ -283,11 +298,30 @@ void TrainingController::on_probability(const ros2neuro_msgs::msg::NeuroControl:
     this->has_new_input_ = true;
 }
 
+void TrainingController::on_neuro_event(const ros2neuro_msgs::msg::NeuroEvent::SharedPtr msg) {
+    // event_sub_ is subscribed on the same topic this node itself publishes
+    // to (Start/Fixation/CFeedback/Hit/Miss/...), so only react to the
+    // blink id pair and ignore everything else.
+    if (msg->event_id == Events::Blink) {
+        this->blink_active_ = true;
+    } else if (msg->event_id == Events::Blink + Events::Off) {
+        this->blink_active_ = false;
+    }
+}
+
 float TrainingController::derive_position(float class_a, float class_b) const {
+    // class_a is the numerator on purpose -- must stay in sync with
+    // TwoClassThresholdController/NoDeadZoneThresholdController's own
+    // _derive_position (game_controller's python nodes): classes_.at(0)
+    // (the first `classes` entry) is Direction::Left (see class2direction
+    // below and is_target_hit's high-input==Left), so class_a (values[0])
+    // has to be what drives this position towards 1 for calibration's
+    // Left/blue threshold to mean the same physical class as evaluation's
+    // and online control's "rotate left".
     const float total = class_a + class_b;
     if (total <= 0.0f)
         return 0.5f;
-    return class_b / total;
+    return class_a / total;
 }
 
 void TrainingController::setevent(int event) {

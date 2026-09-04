@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Two-class threshold controller. See package README for full details."""
+"""No-dead-zone threshold controller. See package README for full details."""
 
 from __future__ import annotations
 
@@ -11,14 +11,23 @@ from std_srvs.srv import Empty
 from game_controller.base_controller import BaseController
 
 # Ascending along the derived probability axis (see _derive_position): the
-# "extreme" pair is closer to 0/1, the plain pair is closer to 0.5.
+# "extreme" pair is closer to 0/1, the plain pair is closer to 0.5. Unlike
+# TwoClassThresholdController, th_right/th_left alone bound the three
+# commands (no dead zone); th_extreme_right/th_extreme_left only control
+# when the integrator reset fires (see _maybe_reset).
 THRESHOLD_NAMES = ("th_extreme_right", "th_right", "th_left", "th_extreme_left")
 THRESHOLD_DEFAULTS = (0.3, 0.4, 0.6, 0.7)
 
 
-class TwoClassThresholdController(BaseController):
+class NoDeadZoneThresholdController(BaseController):
+    """Same 4-threshold parameter set as TwoClassThresholdController, but with
+    no dead zone: th_right/th_left alone split [0, 1] into three commands
+    with no gap, and the outer th_extreme_right/th_extreme_left (instead of
+    the absolute 0.0/1.0 extremes) are what triggers the integrator reset.
+    """
+
     def __init__(self) -> None:
-        super().__init__("two_class_threshold_controller")
+        super().__init__("no_dead_zone_threshold_controller")
 
         for name, default in zip(THRESHOLD_NAMES, THRESHOLD_DEFAULTS, strict=True):
             self.declare_parameter(name, default)
@@ -69,28 +78,16 @@ class TwoClassThresholdController(BaseController):
         return SetParametersResult(successful=True)
 
     @staticmethod
-    def _command_for_probability(probability: float, t: dict[str, float]) -> str | None:
-        # probability = _derive_position(values[0], values[1]) -- class_a
-        # (values[0], the FIRST class configured via the `classes` launch
-        # arg used by calibration/evaluation, e.g. classes[0]) dominant ->
-        # probability near 1. The wheel places low probability on the
-        # visual RIGHT and high probability on the visual LEFT
-        # (SingleWheel::input2angle), and training_controller's
-        # is_target_hit/class2direction agree: classes[0] is Direction::Left
-        # (the blue threshold in calibration) and is hit when the input is
-        # HIGH. So class_a dominant (high probability) -> visual LEFT ->
-        # INPUT_A ("rotate left"), class_b dominant (low probability) ->
-        # visual RIGHT -> INPUT_B ("rotate right") -- consistent with
-        # calibration/evaluation as long as the classifier feeding
-        # /integrated/raw publishes classes[0]'s evidence as values[0].
-        if probability < t["th_extreme_right"]:
-            return "INPUT_B"  # right
+    def _command_for_probability(probability: float, t: dict[str, float]) -> str:
+        # No dead zone: th_right/th_left alone cover [0, 1] with no gap, so
+        # a command is always sent. Same class_a/class_b <-> left/right
+        # convention as TwoClassThresholdController -- see that controller's
+        # comment for why class_a (values[0]) has to be the numerator in
+        # _derive_position for this to line up with calibration/evaluation.
         if probability < t["th_right"]:
-            return None
+            return "INPUT_B"  # right
         if probability < t["th_left"]:
             return "INPUT_C"  # up
-        if probability < t["th_extreme_left"]:
-            return None
         return "INPUT_A"  # left
 
     def _maybe_send(self, command: str) -> None:
@@ -105,10 +102,10 @@ class TwoClassThresholdController(BaseController):
             self._last_sent_command = command
             self._last_sent_time_ns = now_ns
 
-    def _maybe_reset(self, probability: float) -> None:
+    def _maybe_reset(self, probability: float, t: dict[str, float]) -> None:
         if not self.get_parameter("with_reset").get_parameter_value().bool_value:
             return
-        if not (probability <= 0.0 or probability >= 1.0):
+        if not (probability <= t["th_extreme_right"] or probability >= t["th_extreme_left"]):
             return
         if not self._reset_client.service_is_ready():
             self.get_logger().warning(
@@ -137,16 +134,14 @@ class TwoClassThresholdController(BaseController):
 
         self._control_pub.publish(NeuroControl(header=msg.header, values=[probability]))
 
-        command = self._command_for_probability(probability, self._read_thresholds())
-        if command is not None:
-            self._maybe_send(command)
-
-        self._maybe_reset(probability)
+        thresholds = self._read_thresholds()
+        self._maybe_send(self._command_for_probability(probability, thresholds))
+        self._maybe_reset(probability, thresholds)
 
 
 def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
-    node = TwoClassThresholdController()
+    node = NoDeadZoneThresholdController()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

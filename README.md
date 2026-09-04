@@ -11,11 +11,25 @@ subscribes to. See the top-level repo for how the two fit together.
 > `ros2neuro_integrator` with the `ros2neuro_integrator_buffer` plugin (the
 > only integrator plugin in this workspace) -- `values[0]`/`values[1]` are
 > two independent per-class accumulator buffers (one per MI class, each
-> clipped to `[0, 1]`), not a single merged probability. Both
-> `two_class_threshold_controller` and `training_controller` (evaluation
-> modality) derive a single `[0, 1]` position from them as
-> `values[1] / (values[0] + values[1])` before applying their own
+> clipped to `[0, 1]`), not a single merged probability. All three
+> controllers below that consume it (`two_class_threshold_controller`,
+> `no_dead_zone_threshold_controller`, and `training_controller` in
+> evaluation modality) derive a single `[0, 1]` position from them as
+> `values[0] / (values[0] + values[1])` before applying their own
 > thresholds -- see `_derive_position`/`derive_position` in each.
+>
+> `values[0]` (`class_a`) is the numerator **on purpose**: it has to be the
+> class that drives the position towards `1`, because `1` is what the wheel
+> (`SingleWheel::input2angle`) renders on the visual **left**, and
+> `training_controller`'s `class2direction`/`is_target_hit` independently
+> fix `classes[0]` (the first id in the `classes` launch arg) as
+> `Direction::Left` (the blue threshold during calibration -- see
+> `ros2neuro_feedback_wheel`'s `SingleWheel.cpp`, `Direction::Left` uses the
+> `royalblue` line). So `values[0]` and `classes[0]` have to be *the same
+> physical MI class* for calibration's "aim for blue" to mean the same
+> thing as control's "rotate left" and evaluation's `Direction::Left` --
+> this is a convention the classifier feeding `/integrated/raw` (not yet in
+> this repo) has to uphold, nothing here can verify it at runtime.
 
 ## Design
 
@@ -38,33 +52,34 @@ each one needs a `#!/usr/bin/env python3` shebang.
   above) and maps it to a command via four thresholds, splitting `[0, 1]`
   into five zones:
 
-  | Probability range                     | Command          |
-  | -------------------------------------- | ---------------- |
-  | `< threshold_1`                        | `INPUT_B`         |
-  | `[threshold_1, threshold_2)`           | *(nothing)*       |
-  | `[threshold_2, threshold_3)`           | `INPUT_C` (forward) |
-  | `[threshold_3, threshold_4)`           | *(nothing)*       |
-  | `>= threshold_4`                       | `INPUT_A`         |
+  | Probability range                       | Command          |
+  | ---------------------------------------- | ---------------- |
+  | `< th_extreme_right`                     | `INPUT_B` (right)  |
+  | `[th_extreme_right, th_right)`           | *(nothing)*       |
+  | `[th_right, th_left)`                    | `INPUT_C` (forward) |
+  | `[th_left, th_extreme_left)`             | *(nothing)*       |
+  | `>= th_extreme_left`                     | `INPUT_A` (left)   |
 
-  Swapped vs. the "naive" low->A/high->B mapping: the wheel (see
-  `ros2neuro_feedback_wheel`'s README) places low probability (`classes[0]`
-  dominant) on the visual right and high probability (`classes[1]`
-  dominant) on the visual left, so low probability has to map to `INPUT_B`
-  ("rotate right" in Brainski2, see the game's `PROTOCOL.md`) and high
-  probability to `INPUT_A` ("rotate left") for the wheel's visual side to
-  match the direction the game actually turns.
+  `class_a` (`values[0]`) dominant pushes the derived probability towards
+  `1`, which the wheel (see `ros2neuro_feedback_wheel`'s README) renders on
+  the visual **left** -- so it maps to `INPUT_A` ("rotate left" in
+  Brainski2, see the game's `PROTOCOL.md`); `class_b` (`values[1]`)
+  dominant pushes towards `0`, visual **right**, `INPUT_B` ("rotate
+  right"). See the top-of-file note above for why `class_a` has to be
+  `values[0]` (and hence `classes[0]`) specifically, not an arbitrary
+  choice.
 
-  Defaults: `threshold_1=0.3`, `threshold_2=0.4`, `threshold_3=0.6`,
-  `threshold_4=0.7`. All four are ROS2 parameters, overridable from the
+  Defaults: `th_extreme_right=0.3`, `th_right=0.4`, `th_left=0.6`,
+  `th_extreme_left=0.7`. All four are ROS2 parameters, overridable from the
   launch file (see below) or any params YAML -- and adjustable **live**,
   ROS2's equivalent of ROS1's `dynamic_reconfigure`: no separate mechanism
   needed, any ROS2 node's parameters are already live-settable, so this one
   just needs the values re-read on every message (rather than cached once at
   startup) plus a validation callback that rejects any set that would break
-  `threshold_1 < threshold_2 <= threshold_3 < threshold_4`. Two ways to
+  `th_extreme_right < th_right <= th_left < th_extreme_left`. Two ways to
   change them at runtime:
   ```bash
-  ros2 param set /two_class_threshold_controller threshold_1 0.25
+  ros2 param set /two_class_threshold_controller th_extreme_right 0.25
   # or, GUI sliders:
   ros2 run rqt_reconfigure rqt_reconfigure
   ```
@@ -98,6 +113,35 @@ each one needs a `#!/usr/bin/env python3` shebang.
   `wheel` node (package `ros2neuro_feedback_wheel`, see its README)
   subscribes to for visualization. The wheel never reads `/integrated/raw`
   directly; this node is the single place deciding what it shows.
+
+  Launched via `controlWithDeathZone.launch.py`.
+- **`no_dead_zone_threshold_controller.py`** -- `NoDeadZoneThresholdController`.
+  Same parameters, same `_derive_position`, and the same `command_period_sec`
+  cooldown/relay-onto-`control_topic`/`with_reset` behaviour as
+  `two_class_threshold_controller`, but two differences in how the four
+  thresholds are used:
+
+  | Probability range     | Command   |
+  | ---------------------- | --------- |
+  | `< th_right`           | `INPUT_B` (right) |
+  | `[th_right, th_left)`  | `INPUT_C` (forward) |
+  | `>= th_left`           | `INPUT_A` (left)  |
+
+  - **No dead zone** -- `th_right`/`th_left` alone split `[0, 1]` into
+    three commands with no gap, so a command is always sent (no `(nothing)`
+    zone).
+  - **Reset at the outer thresholds** -- when `with_reset` is true, the
+    integrator `reset` service is called as soon as the probability reaches
+    `th_extreme_right` or `th_extreme_left` (i.e. `probability <=
+    th_extreme_right` or `probability >= th_extreme_left`), instead of
+    waiting for the absolute `0.0`/`1.0` extremes.
+
+  `th_extreme_right < th_right <= th_left < th_extreme_left` is still
+  enforced by the same validation, since `th_extreme_right`/`th_extreme_left`
+  still have to sit outside the `INPUT_B`/`INPUT_A` command zones for the
+  reset to make sense.
+
+  Launched via `controlNoDeadZone.launch.py`.
 - **`training_controller`** (C++, `src/training_controller.cpp`) -- the
   calibration/evaluation orchestrator. Owns everything a training session
   needs: trial sequencing (`TrialSequence`), fake-feedback generation in
@@ -202,14 +246,17 @@ This split is permanent, not a workaround for now:
 ## Running
 
 ```bash
-# threshold controller alone, defaults
-ros2 launch game_controller two_class_threshold.launch.py
+# threshold controller (with dead zone) alone, defaults
+ros2 launch game_controller controlWithDeathZone.launch.py
 
-# threshold controller alone, overriding thresholds
-ros2 launch game_controller two_class_threshold.launch.py threshold_1:=0.25 threshold_4:=0.75
+# threshold controller (with dead zone) alone, overriding thresholds
+ros2 launch game_controller controlWithDeathZone.launch.py th_extreme_right:=0.25 th_extreme_left:=0.75
 
-# threshold controller alone, overriding the send cooldown and enabling integrator reset
-ros2 launch game_controller two_class_threshold.launch.py command_period_sec:=0.2 with_reset:=true
+# threshold controller (with dead zone) alone, overriding the send cooldown and enabling integrator reset
+ros2 launch game_controller controlWithDeathZone.launch.py command_period_sec:=0.2 with_reset:=true
+
+# no-dead-zone threshold controller alone, defaults (reset at th_extreme_right/th_extreme_left if with_reset:=true)
+ros2 launch game_controller controlNoDeadZone.launch.py with_reset:=true
 
 # threshold controller + game_bridge together (see game_bringup)
 ros2 launch game_bringup bringup.launch.py

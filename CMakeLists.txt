@@ -20,6 +20,12 @@ install(PROGRAMS
 )
 
 install(PROGRAMS
+  game_controller/no_dead_zone_threshold_controller.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME no_dead_zone_threshold_controller
+)
+
+install(PROGRAMS
   game_controller/dummy_keyboard_controller.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME dummy_keyboard_controller

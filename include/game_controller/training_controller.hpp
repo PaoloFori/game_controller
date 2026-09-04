@@ -14,6 +14,9 @@
 namespace game_controller {
 
 // Must match ros2neuro_feedback_wheel's Wheel.h Events struct exactly.
+// (Blink is never emitted by game_controller itself -- it comes from
+// ros2neuro_artifact_blink -- but is listed here too so the two structs
+// stay in sync.)
 struct Events {
     static const int Start     = 1;
     static const int Fixation  = 786;
@@ -21,7 +24,7 @@ struct Events {
     static const int Hit       = 897;
     static const int Miss      = 898;
     static const int Off       = 32768;
-    static const int Command   = 6000;
+    static const int Blink     = 1024;
 };
 
 struct Duration {
@@ -55,6 +58,7 @@ private:
     void sleep(int ms);
 
     void on_probability(const ros2neuro_msgs::msg::NeuroControl::SharedPtr msg);
+    void on_neuro_event(const ros2neuro_msgs::msg::NeuroEvent::SharedPtr msg);
     float derive_position(float class_a, float class_b) const;
 
     Direction class2direction(int classid) const;
@@ -64,6 +68,7 @@ private:
     rclcpp::Publisher<ros2neuro_msgs::msg::NeuroEvent>::SharedPtr event_pub_;
     rclcpp::Publisher<ros2neuro_msgs::msg::NeuroControl>::SharedPtr control_pub_;
     rclcpp::Subscription<ros2neuro_msgs::msg::NeuroControl>::SharedPtr probability_sub_;
+    rclcpp::Subscription<ros2neuro_msgs::msg::NeuroEvent>::SharedPtr event_sub_;
 
     TrialSequence trialsequence_;
 
@@ -75,6 +80,7 @@ private:
 
     float current_input_ = 0.5f;
     bool has_new_input_ = false;
+    bool blink_active_ = false;
 
     static constexpr float kRateHz = 100.0f;
 };
