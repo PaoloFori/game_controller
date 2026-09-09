@@ -8,6 +8,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(ros2neuro_msgs REQUIRED)
 
 # Python nodes: no setup.py in a hybrid package, so install them explicitly.
@@ -39,7 +40,7 @@ add_executable(training_controller
   src/trial_sequence.cpp
   src/autopilot.cpp
 )
-ament_target_dependencies(training_controller rclcpp ros2neuro_msgs)
+ament_target_dependencies(training_controller rclcpp std_msgs ros2neuro_msgs)
 
 install(TARGETS training_controller DESTINATION lib/${PROJECT_NAME})
 

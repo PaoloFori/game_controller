@@ -116,20 +116,33 @@ each one needs a `#!/usr/bin/env python3` shebang.
 
   Launched via `controlWithDeathZone.launch.py`.
 - **`no_dead_zone_threshold_controller.py`** -- `NoDeadZoneThresholdController`.
-  Same parameters, same `_derive_position`, and the same `command_period_sec`
-  cooldown/relay-onto-`control_topic`/`with_reset` behaviour as
-  `two_class_threshold_controller`, but two differences in how the four
-  thresholds are used:
+  Same threshold parameters, same `_derive_position`, and the same
+  relay-onto-`control_topic`/`with_reset` behaviour as
+  `two_class_threshold_controller`, but structured as an explicit 3-state
+  machine (`ControlState`) instead of a flat probability-to-command mapping,
+  and with no dead zone:
 
-  | Probability range     | Command   |
-  | ---------------------- | --------- |
-  | `< th_right`           | `INPUT_B` (right) |
-  | `[th_right, th_left)`  | `INPUT_C` (forward) |
-  | `>= th_left`           | `INPUT_A` (left)  |
+  | Probability range     | State (`ControlState`) | Command   |
+  | ---------------------- | ----------------------- | --------- |
+  | `< th_right`           | `RIGHT`                 | `INPUT_B` (right) |
+  | `[th_right, th_left)`  | `CENTER`                | `INPUT_C` (forward) |
+  | `>= th_left`           | `LEFT`                  | `INPUT_A` (left)  |
 
   - **No dead zone** -- `th_right`/`th_left` alone split `[0, 1]` into
-    three commands with no gap, so a command is always sent (no `(nothing)`
+    three states with no gap, so a command is always sent (no `(nothing)`
     zone).
+  - **Per-state cooldown** -- each state re-sends its command at most once
+    per its own period, instead of a single shared `command_period_sec`:
+    `right_command_period_sec` and `left_command_period_sec` (default `0.5`
+    each) for the two turn states, `center_command_period_sec` (default
+    `0.1`, much shorter) for `CENTER`, since it also serves as "keep going
+    forward" and needs to be re-sent far more often for continuous in-game
+    motion. Same non-blocking cooldown mechanics as
+    `two_class_threshold_controller`'s `command_period_sec` otherwise:
+    entering a *different* state always sends immediately regardless of the
+    cooldown (which then restarts from that new send), and passing through
+    and back into the *same* state does not reset the cooldown started by
+    the earlier send.
   - **Reset at the outer thresholds** -- when `with_reset` is true, the
     integrator `reset` service is called as soon as the probability reaches
     `th_extreme_right` or `th_extreme_left` (i.e. `probability <=

@@ -40,7 +40,13 @@ DEFAULT_THRESHOLDS = {
 }
 
 DEFAULT_EXTRA_PARAMS = {
-    "command_period_sec": "0.5",
+    # RIGHT/LEFT are one-shot turns, re-sent at most once per this period
+    # while the probability stays in the same zone; CENTER doubles as
+    # "keep going forward" so it defaults far shorter, to re-send much more
+    # often. See ControlState/_maybe_send in the node itself.
+    "right_command_period_sec": "0.5",
+    "center_command_period_sec": "0.1",
+    "left_command_period_sec": "0.5",
     "with_reset": "false",
     "reset_service_name": "/integrator/reset",
     "control_topic": "/game_controller/control",

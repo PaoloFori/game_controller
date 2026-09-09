@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include <std_msgs/msg/empty.hpp>
+
 #include <ros2neuro_msgs/msg/neuro_control.hpp>
 #include <ros2neuro_msgs/msg/neuro_event.hpp>
 
@@ -67,6 +69,11 @@ private:
 
     rclcpp::Publisher<ros2neuro_msgs::msg::NeuroEvent>::SharedPtr event_pub_;
     rclcpp::Publisher<ros2neuro_msgs::msg::NeuroControl>::SharedPtr control_pub_;
+    // Evaluation-only: tells ros2neuro_artifact_blink's blink_detector_node
+    // to close any still-open window and stop publishing for good, so it
+    // can never be left with an unmatched onset/offset because of a
+    // shutdown-timing race once the whole launch is torn down afterwards.
+    rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr protocol_ended_pub_;
     rclcpp::Subscription<ros2neuro_msgs::msg::NeuroControl>::SharedPtr probability_sub_;
     rclcpp::Subscription<ros2neuro_msgs::msg::NeuroEvent>::SharedPtr event_sub_;
 
@@ -81,6 +88,12 @@ private:
     float current_input_ = 0.5f;
     bool has_new_input_ = false;
     bool blink_active_ = false;
+
+    // Evaluation-only outcome tally, reported as a summary once the
+    // protocol ends -- see run()'s "Protocol ended" log.
+    int count_hit_ = 0;
+    int count_miss_ = 0;
+    int count_timeout_ = 0;
 
     static constexpr float kRateHz = 100.0f;
 };

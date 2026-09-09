@@ -23,6 +23,9 @@ bool TrainingController::configure(void) {
     this->declare_parameter<std::string>("control_topic", "/game_controller/control");
     this->declare_parameter<std::string>("event_topic", "/neuroevent");
     this->declare_parameter<std::string>("probability_topic", "/integrated/raw");
+    // Must match ros2neuro_artifact_blink's blink_detector_node default for
+    // the same parameter -- see its README.
+    this->declare_parameter<std::string>("protocol_ended_topic", "/protocol_ended");
 
     this->declare_parameter("duration.begin", 10000);
     this->declare_parameter("duration.start", 1000);
@@ -102,10 +105,11 @@ bool TrainingController::configure(void) {
 
     RCLCPP_INFO(this->get_logger(), "Trials: %d", this->trialsequence_.size());
 
-    std::string control_topic, event_topic;
+    std::string control_topic, event_topic, protocol_ended_topic;
     this->get_parameter("control_topic", control_topic);
     this->get_parameter("event_topic", event_topic);
     this->get_parameter("probability_topic", this->probability_topic_);
+    this->get_parameter("protocol_ended_topic", protocol_ended_topic);
 
     this->control_pub_ = this->create_publisher<ros2neuro_msgs::msg::NeuroControl>(control_topic, 10);
     this->event_pub_ = this->create_publisher<ros2neuro_msgs::msg::NeuroEvent>(event_topic, 10);
@@ -123,6 +127,16 @@ bool TrainingController::configure(void) {
             event_topic,
             10,
             std::bind(&TrainingController::on_neuro_event, this, std::placeholders::_1));
+
+        // Told to blink_detector_node once run() reaches "Protocol ended" --
+        // see there for why (avoids a shutdown-timing race between this
+        // process, the blink node and the recorder once the whole launch is
+        // torn down). transient_local so it's still delivered even if
+        // blink_detector_node's subscription somehow matches after this
+        // publish call (it shouldn't, given it's created at blink node
+        // startup, but latching is cheap insurance for a one-shot signal).
+        this->protocol_ended_pub_ = this->create_publisher<std_msgs::msg::Empty>(
+            protocol_ended_topic, rclcpp::QoS(1).reliable().transient_local());
     }
 
     return true;
@@ -261,6 +275,17 @@ void TrainingController::run(void) {
         //    this->setevent(reached_classid + Events::Command);
 
         const int outcome = (trialdirection == targethit) ? Events::Hit : Events::Miss;
+
+        if (this->modality_ == Modality::Evaluation) {
+            if (targethit == trialdirection) {
+                ++this->count_hit_;
+            } else if (targethit == Direction::Timeout) {
+                ++this->count_timeout_;
+            } else {
+                ++this->count_miss_;
+            }
+        }
+
         this->setevent(outcome);
         this->sleep(this->duration_.boom);
         if (!rclcpp::ok()) {
@@ -285,6 +310,17 @@ void TrainingController::run(void) {
     }
 
     RCLCPP_INFO(this->get_logger(), "Protocol ended");
+
+    if (this->modality_ == Modality::Evaluation) {
+        this->protocol_ended_pub_->publish(std_msgs::msg::Empty());
+
+        const int total = this->count_hit_ + this->count_miss_ + this->count_timeout_;
+        const double accuracy = (total > 0) ? (100.0 * this->count_hit_ / total) : 0.0;
+        RCLCPP_INFO(
+            this->get_logger(),
+            "Evaluation summary: hit=%d miss=%d timeout=%d accuracy=%.1f%%",
+            this->count_hit_, this->count_miss_, this->count_timeout_, accuracy);
+    }
 }
 
 void TrainingController::on_probability(const ros2neuro_msgs::msg::NeuroControl::SharedPtr msg) {
