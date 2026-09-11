@@ -52,6 +52,14 @@ DEFAULT_EXTRA_PARAMS = {
     "control_topic": "/game_controller/control",
 }
 
+# Which command (INPUT_A..INPUT_D) each zone sends -- see
+# NoDeadZoneThresholdController.STATE_COMMAND_PARAMS.
+DEFAULT_COMMANDS = {
+    "right_command": "INPUT_B",
+    "center_command": "INPUT_C",
+    "left_command": "INPUT_A",
+}
+
 
 def generate_launch_description() -> LaunchDescription:
     threshold_args = [
@@ -62,6 +70,12 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument(name, default_value=default, description=f"{name} for the no-dead-zone controller")
         for name, default in DEFAULT_EXTRA_PARAMS.items()
     ]
+    command_args = [
+        DeclareLaunchArgument(
+            name, default_value=default, description=f"{name} for the no-dead-zone controller's command mapping"
+        )
+        for name, default in DEFAULT_COMMANDS.items()
+    ]
 
     node = Node(
         package="game_controller",
@@ -69,8 +83,11 @@ def generate_launch_description() -> LaunchDescription:
         name="no_dead_zone_threshold_controller",
         output="screen",
         parameters=[
-            {name: LaunchConfiguration(name) for name in {**DEFAULT_THRESHOLDS, **DEFAULT_EXTRA_PARAMS}}
+            {
+                name: LaunchConfiguration(name)
+                for name in {**DEFAULT_THRESHOLDS, **DEFAULT_EXTRA_PARAMS, **DEFAULT_COMMANDS}
+            }
         ],
     )
 
-    return LaunchDescription([*threshold_args, *extra_args, node])
+    return LaunchDescription([*threshold_args, *extra_args, *command_args, node])

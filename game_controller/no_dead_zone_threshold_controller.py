@@ -29,10 +29,18 @@ class ControlState(Enum):
     LEFT = "left"
 
 
-STATE_COMMANDS = {
-    ControlState.RIGHT: "INPUT_B",  # per pong: input_D
-    ControlState.CENTER: "INPUT_C", # per pong: input_A
-    ControlState.LEFT: "INPUT_A",   # per pong: input_C
+# Which command each state sends is itself a parameter (set from the
+# no_dead_zone_control.xml config, see controlNoDeadZone.launch.py), not
+# hardcoded, so the mapping can be retuned without touching this file.
+STATE_COMMAND_PARAMS = {
+    ControlState.RIGHT: "right_command",
+    ControlState.CENTER: "center_command",
+    ControlState.LEFT: "left_command",
+}
+COMMAND_PARAM_DEFAULTS = {
+    "right_command": "INPUT_B",  # per pong: input_D
+    "center_command": "INPUT_C",  # per pong: input_A
+    "left_command": "INPUT_A",  # per pong: input_C
 }
 
 # Each state re-sends its command on its own cooldown (see _maybe_send).
@@ -65,6 +73,8 @@ class NoDeadZoneThresholdController(BaseController):
         for name, default in zip(THRESHOLD_NAMES, THRESHOLD_DEFAULTS, strict=True):
             self.declare_parameter(name, default)
         for name, default in PERIOD_PARAM_DEFAULTS.items():
+            self.declare_parameter(name, default)
+        for name, default in COMMAND_PARAM_DEFAULTS.items():
             self.declare_parameter(name, default)
         self.declare_parameter("with_reset", False)
         self.declare_parameter("reset_service_name", "/integrator/reset")
@@ -134,7 +144,9 @@ class NoDeadZoneThresholdController(BaseController):
         cooldown_elapsed = self._last_sent_time_ns is None or (now_ns - self._last_sent_time_ns) >= period_ns
 
         if is_new_state or cooldown_elapsed:
-            self.send_command(STATE_COMMANDS[state])
+            command_param = STATE_COMMAND_PARAMS[state]
+            command = self.get_parameter(command_param).get_parameter_value().string_value
+            self.send_command(command)
             self._last_sent_state = state
             self._last_sent_time_ns = now_ns
 
